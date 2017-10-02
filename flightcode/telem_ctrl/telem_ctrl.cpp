@@ -461,6 +461,8 @@ static void *tlm_main(void *)
         return NULL;
     }
 
+    memset(&packet, 0, sizeof(packet));
+
     /* Clear mavlink sources and stats. */
     sources_clear();
 
@@ -564,7 +566,7 @@ static void *tlm_main(void *)
             /* packet from solo */
             sa_len = sizeof(sa);
             t1_us = clock_gettime_us(CLOCK_MONOTONIC);
-            res = recvfrom(fd_solo, &packet, sizeof(packet), 0, (struct sockaddr *)&sa, &sa_len);
+            res = recvfrom(fd_solo, &packet.payload, sizeof(packet.payload), 0, (struct sockaddr *)&sa, &sa_len);
             t2_us = clock_gettime_us(CLOCK_MONOTONIC);
             /* recvfrom should not block; warn if it does */
             if ((t2_us - t1_us) > 10000)
@@ -589,8 +591,6 @@ static void *tlm_main(void *)
                 dropped_log_us = now_us;
             }
 
-            link_next_seq = packet.seq + 1;
-
             pkts_down_total++;
 
             /* We get one mavlink packet per udp datagram. Sanity checks here
@@ -601,25 +601,11 @@ static void *tlm_main(void *)
                 if ((skipped = can_log_error(now_us)) >= 0)
                     syslog(LOG_ERR, "[%u] received packet not from solo (0x%08x)", skipped,
                            sa.sin_addr.s_addr);
-            } else if (res < (LinkPacket::HDR_LEN + 8)) {
-                int skipped;
-                if ((skipped = can_log_error(now_us)) >= 0)
-                    syslog(LOG_ERR, "[%u] received runt packet (%d bytes)", skipped, res);
             } else if (packet.payload[0] != 254) {
                 int skipped;
                 if ((skipped = can_log_error(now_us)) >= 0)
                     syslog(LOG_ERR, "[%u] received bad magic (0x%02x)", skipped, packet.payload[0]);
-            }
-            /*
-            else if (packet.payload[1] != (res - LinkPacket::HDR_LEN - 8))
-            {
-                int skipped;
-                if ((skipped = can_log_error(now_us)) >= 0)
-                    syslog(LOG_ERR, "[%u] inconsistent length (%u, %u)",
-                           skipped, packet.payload[1], res);
-            }
-            */
-            else {
+            } else {
                 /* packet is from solo and passes sanity checks */
 
                 /* Run through the entire datagram and check each sequence and sys/comp.
@@ -681,10 +667,10 @@ static void *tlm_main(void *)
                     ssize_t len = 0;
                     if (dest_table.dest[i].format == TF_MAVLINK) {
                         buf = (const void *)(packet.payload);
-                        len = res - LinkPacket::HDR_LEN;
+                        len = res;
                     } else if (dest_table.dest[i].format == TF_LINK_PACKET) {
                         buf = (const void *)(&packet);
-                        len = res;
+                        len = res + LinkPacket::HDR_LEN;
                     }
                     /* sendto blocks if the network has gone away */
                     errno = 0;
